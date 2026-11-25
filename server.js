@@ -35,34 +35,32 @@ io.on("connection", (socket) => {
     if (typeof profile === "function") { callback = profile; profile = {}; }
     let code;
     do { code = makeCode(); } while (rooms.has(code));
-    rooms.set(code, { players: new Map(), createdAt: Date.now(), ownerId: socket.id });
+    const ownerToken = String(profile?.ownerToken || "");
+    if (ownerToken.length < 12) { if (typeof callback === "function") callback({ok:false,error:"Owner session could not be created. Please try again."}); return; }
+    rooms.set(code, { players: new Map(), createdAt: Date.now(), ownerId: socket.id, ownerToken });
     joinRoom(socket, code, profile?.name);
-    if (typeof callback === "function") callback({ ok: true, code });
+    if (typeof callback === "function") callback({ ok: true, code, owner: true });
   });
 
   socket.on("join-room", (rawCode, profile, callback) => {
     if (typeof profile === "function") { callback = profile; profile = {}; }
+    if (typeof rawCode === "object" && rawCode) { profile = rawCode; rawCode = profile.code; }
     const code = String(rawCode || "").trim().toUpperCase();
-    if (!rooms.has(code)) {
-      if (typeof callback === "function") callback({ ok: false, error: "Room not found." });
-      return;
-    }
-    joinRoom(socket, code, profile?.name);
-    if (typeof callback === "function") callback({ ok: true, code });
+    if (!rooms.has(code)) { if (typeof callback === "function") callback({ ok: false, error: "Room not found." }); return; }
+    const room = rooms.get(code);
+    const isOwner = !!profile?.ownerToken && profile.ownerToken === room.ownerToken;
+    joinRoom(socket, code, profile?.name, isOwner);
+    if (typeof callback === "function") callback({ ok: true, code, owner: isOwner });
   });
 
   socket.on("owner-command", (data, callback) => {
     const code = socket.data.roomCode;
     const room = code && rooms.get(code);
-    if (!room || room.ownerId !== socket.id) {
-      if (typeof callback === "function") callback({ ok: false, error: "Only the private server owner can use commands." });
-      return;
-    }
+    const authorized = !!room && (room.ownerId === socket.id || (!!data?.ownerToken && data.ownerToken === room.ownerToken));
+    if (!authorized) { if (typeof callback === "function") callback({ ok: false, error: "Only the connected private server owner can use commands." }); return; }
+    if (room.ownerId !== socket.id) { room.ownerId = socket.id; io.to(code).emit("owner-changed", { id: socket.id }); }
     const commandId = String(data?.commandId || "").slice(0, 100);
-    if (!/^[a-z0-9:_-]+$/i.test(commandId)) {
-      if (typeof callback === "function") callback({ ok: false, error: "Invalid command." });
-      return;
-    }
+    if (!/^[a-z0-9:_-]+$/i.test(commandId)) { if (typeof callback === "function") callback({ ok: false, error: "Invalid command." }); return; }
     if (commandId === "server-reset") {
       const seed = String(Math.floor(Math.random() * 2147483647));
       io.to(code).emit("server-reset", { seed });
@@ -158,7 +156,7 @@ io.on("connection", (socket) => {
   });
 });
 
-function joinRoom(socket, code, characterName) {
+function joinRoom(socket, code, characterName, forceOwner = false) {
   const previous = socket.data.roomCode;
   if (previous && rooms.has(previous)) {
     rooms.get(previous).players.delete(socket.id);
@@ -167,7 +165,8 @@ function joinRoom(socket, code, characterName) {
   socket.join(code);
   socket.data.roomCode = code;
   const room = rooms.get(code);
-  const player = { x: 0, y: 0, name: String(characterName || "Player").slice(0, 24), inCombat: false, onBoat: false, civName: "", owner: room.ownerId === socket.id };
+  const player = { x: 0, y: 0, name: String(characterName || "Player").slice(0, 24), inCombat: false, onBoat: false, civName: "", owner: forceOwner || room.ownerId === socket.id };
+  if (forceOwner) room.ownerId = socket.id;
   room.players.set(socket.id, player);
   socket.emit("room-players", [...room.players.entries()].map(([id, p]) => ({ id, ...p })));
   socket.to(code).emit("player-joined", { id: socket.id, ...player });
