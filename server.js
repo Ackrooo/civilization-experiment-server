@@ -22,6 +22,7 @@ app.get("/health", (_req, res) => {
 });
 
 const rooms = new Map();
+for (let i = 1; i <= 3; i++) rooms.set("PUBLIC-" + i, { players: new Map(), createdAt: Date.now(), ownerId: null, ownerToken: "", isPublic: true });
 
 function makeCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -31,6 +32,14 @@ function makeCode() {
 }
 
 io.on("connection", (socket) => {
+  socket.on("join-public", (data, callback) => {
+    const serverId = Number(data?.serverId);
+    if (![1, 2, 3].includes(serverId)) { if (typeof callback === "function") callback({ ok: false, error: "Invalid public server." }); return; }
+    const code = "PUBLIC-" + serverId;
+    joinRoom(socket, code, data?.name);
+    if (typeof callback === "function") callback({ ok: true, serverId, code, public: true });
+  });
+
   socket.on("create-room", (profile, callback) => {
     if (typeof profile === "function") { callback = profile; profile = {}; }
     let code;
@@ -144,7 +153,7 @@ io.on("connection", (socket) => {
     const room = rooms.get(code);
     room.players.delete(socket.id);
     socket.to(code).emit("player-left", { id: socket.id });
-    if (room.players.size === 0) rooms.delete(code);
+    if (room.players.size === 0 && !room.isPublic) rooms.delete(code);
     else {
       if (room.ownerId === socket.id) {
         room.ownerId = room.players.keys().next().value;
