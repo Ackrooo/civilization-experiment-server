@@ -116,11 +116,15 @@ io.on("connection", (socket) => {
       return;
     }
     const destination = rooms.get(code).players.get(socket.id);
+    // Use the coordinates captured when the destination player accepts.
+    // The periodic player-update can be a tick behind the live position.
+    const x = Number.isFinite(Number(data?.x)) ? Number(data.x) : (destination?.x ?? 0);
+    const y = Number.isFinite(Number(data?.y)) ? Number(data.y) : (destination?.y ?? 0);
     io.to(target).emit("travel-result", {
-      accepted: !!data.accepted, x: destination?.x ?? 0, y: destination?.y ?? 0,
+      accepted: !!data.accepted, x, y,
       inCombat: !!destination?.inCombat || !!data.inCombat,
       onBoat: !!destination?.onBoat || !!data.onBoat,
-      name: destination?.name || data.name || "Player"
+      name: String(data?.name || destination?.name || "Player").slice(0, 24)
     });
     if (typeof callback === "function") callback({ ok: true });
   });
