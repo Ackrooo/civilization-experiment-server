@@ -74,7 +74,8 @@ io.on("connection", (socket) => {
   socket.on("player-update", (data) => {
     const code = socket.data.roomCode;
     if (!code || !rooms.has(code) || !data || typeof data !== "object") return;
-    const previous = rooms.get(code).players.get(socket.id) || {};
+    const room = rooms.get(code);
+    const previous = room.players.get(socket.id) || {};
     const safe = {
       x: Number.isFinite(data.x) ? data.x : 0,
       y: Number.isFinite(data.y) ? data.y : 0,
