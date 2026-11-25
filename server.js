@@ -35,7 +35,7 @@ io.on("connection", (socket) => {
     if (typeof profile === "function") { callback = profile; profile = {}; }
     let code;
     do { code = makeCode(); } while (rooms.has(code));
-    rooms.set(code, { players: new Map(), createdAt: Date.now() });
+    rooms.set(code, { players: new Map(), createdAt: Date.now(), ownerId: socket.id });
     joinRoom(socket, code, profile?.name);
     if (typeof callback === "function") callback({ ok: true, code });
   });
@@ -49,6 +49,28 @@ io.on("connection", (socket) => {
     }
     joinRoom(socket, code, profile?.name);
     if (typeof callback === "function") callback({ ok: true, code });
+  });
+
+  socket.on("owner-command", (data, callback) => {
+    const code = socket.data.roomCode;
+    const room = code && rooms.get(code);
+    if (!room || room.ownerId !== socket.id) {
+      if (typeof callback === "function") callback({ ok: false, error: "Only the private server owner can use commands." });
+      return;
+    }
+    const commandId = String(data?.commandId || "").slice(0, 100);
+    if (!/^[a-z0-9:_-]+$/i.test(commandId)) {
+      if (typeof callback === "function") callback({ ok: false, error: "Invalid command." });
+      return;
+    }
+    if (commandId === "server-reset") {
+      const seed = String(Math.floor(Math.random() * 2147483647));
+      io.to(code).emit("server-reset", { seed });
+      if (typeof callback === "function") callback({ ok: true, reset: true });
+      return;
+    }
+    io.to(code).emit("owner-command", { commandId });
+    if (typeof callback === "function") callback({ ok: true });
   });
 
   socket.on("player-update", (data) => {
@@ -123,7 +145,15 @@ io.on("connection", (socket) => {
     room.players.delete(socket.id);
     socket.to(code).emit("player-left", { id: socket.id });
     if (room.players.size === 0) rooms.delete(code);
-    else io.to(code).emit("room-players", [...room.players.entries()].map(([id, p]) => ({ id, ...p })));
+    else {
+      if (room.ownerId === socket.id) {
+        room.ownerId = room.players.keys().next().value;
+        const owner = room.players.get(room.ownerId);
+        if (owner) owner.owner = true;
+        io.to(code).emit("owner-changed", { id: room.ownerId });
+      }
+      io.to(code).emit("room-players", [...room.players.entries()].map(([id, p]) => ({ id, ...p })));
+    }
   });
 });
 
@@ -136,7 +166,7 @@ function joinRoom(socket, code, characterName) {
   socket.join(code);
   socket.data.roomCode = code;
   const room = rooms.get(code);
-  const player = { x: 0, y: 0, name: String(characterName || "Player").slice(0, 24), inCombat: false, onBoat: false, civName: "" };
+  const player = { x: 0, y: 0, name: String(characterName || "Player").slice(0, 24), inCombat: false, onBoat: false, civName: "", owner: room.ownerId === socket.id };
   room.players.set(socket.id, player);
   socket.emit("room-players", [...room.players.entries()].map(([id, p]) => ({ id, ...p })));
   socket.to(code).emit("player-joined", { id: socket.id, ...player });
