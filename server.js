@@ -148,35 +148,45 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    const code = socket.data.roomCode;
-    if (!code || !rooms.has(code)) return;
-    const room = rooms.get(code);
-    room.players.delete(socket.id);
-    socket.to(code).emit("player-left", { id: socket.id });
-    if (room.players.size === 0 && !room.isPublic) rooms.delete(code);
-    else {
-      if (room.ownerId === socket.id) {
-        room.ownerId = room.players.keys().next().value;
-        const owner = room.players.get(room.ownerId);
-        if (owner) owner.owner = true;
-        io.to(code).emit("owner-changed", { id: room.ownerId });
-      }
-      io.to(code).emit("room-players", [...room.players.entries()].map(([id, p]) => ({ id, ...p })));
-    }
+    leaveRoom(socket);
   });
 });
 
-function joinRoom(socket, code, characterName, forceOwner = false) {
-  const previous = socket.data.roomCode;
-  if (previous && rooms.has(previous)) {
-    rooms.get(previous).players.delete(socket.id);
-    socket.to(previous).emit("player-left", { id: socket.id });
+function leaveRoom(socket) {
+  const code = socket.data.roomCode;
+  if (!code) return;
+  const room = rooms.get(code);
+  socket.leave(code);
+  socket.data.roomCode = null;
+  if (!room) return;
+  room.players.delete(socket.id);
+  socket.to(code).emit("player-left", { id: socket.id });
+  if (room.ownerId === socket.id) {
+    room.ownerId = room.players.keys().next().value || null;
+    for (const player of room.players.values()) player.owner = false;
+    const owner = room.ownerId && room.players.get(room.ownerId);
+    if (owner) owner.owner = true;
+    io.to(code).emit("owner-changed", { id: room.ownerId });
   }
+  if (room.players.size === 0 && !room.isPublic) {
+    rooms.delete(code);
+    return;
+  }
+  io.to(code).emit("room-players", [...room.players.entries()].map(([id, p]) => ({ id, ...p })));
+}
+
+function joinRoom(socket, code, characterName, forceOwner = false) {
+  if (socket.data.roomCode && socket.data.roomCode !== code) leaveRoom(socket);
+  const room = rooms.get(code);
+  if (!room) return;
   socket.join(code);
   socket.data.roomCode = code;
-  const room = rooms.get(code);
   const player = { x: 0, y: 0, name: String(characterName || "Player").slice(0, 24), inCombat: false, onBoat: false, civName: "", owner: forceOwner || room.ownerId === socket.id };
-  if (forceOwner) { room.ownerId = socket.id; io.to(code).emit("owner-changed", { id: socket.id }); }
+  if (forceOwner) {
+    room.ownerId = socket.id;
+    for (const p of room.players.values()) p.owner = false;
+    io.to(code).emit("owner-changed", { id: socket.id });
+  }
   room.players.set(socket.id, player);
   socket.emit("room-players", [...room.players.entries()].map(([id, p]) => ({ id, ...p })));
   socket.to(code).emit("player-joined", { id: socket.id, ...player });
