@@ -22,7 +22,7 @@ app.get("/health", (_req, res) => {
 });
 
 const rooms = new Map();
-for (let i = 1; i <= 3; i++) rooms.set("PUBLIC-" + i, { players: new Map(), createdAt: Date.now(), ownerId: null, ownerToken: "", isPublic: true });
+for (let i = 1; i <= 3; i++) rooms.set("PUBLIC-" + i, { players: new Map(), createdAt: Date.now(), ownerId: null, ownerToken: "", isPublic: true, seed: Math.floor(Math.random() * 2147483646) + 1 });
 
 function makeCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -46,7 +46,7 @@ io.on("connection", (socket) => {
     do { code = makeCode(); } while (rooms.has(code));
     const ownerToken = String(profile?.ownerToken || "");
     if (ownerToken.length < 12) { if (typeof callback === "function") callback({ok:false,error:"Owner session could not be created. Please try again."}); return; }
-    rooms.set(code, { players: new Map(), createdAt: Date.now(), ownerId: socket.id, ownerToken });
+    rooms.set(code, { players: new Map(), createdAt: Date.now(), ownerId: socket.id, ownerToken, seed: Math.floor(Math.random() * 2147483646) + 1 });
     joinRoom(socket, code, profile?.name);
     if (typeof callback === "function") callback({ ok: true, code, owner: true });
   });
@@ -72,6 +72,7 @@ io.on("connection", (socket) => {
     if (!/^[a-z0-9:_-]+$/i.test(commandId)) { if (typeof callback === "function") callback({ ok: false, error: "Invalid command." }); return; }
     if (commandId === "server-reset") {
       const seed = String(Math.floor(Math.random() * 2147483647));
+      room.seed = Number(seed);
       io.to(code).emit("server-reset", { seed });
       if (typeof callback === "function") callback({ ok: true, reset: true });
       return;
@@ -185,6 +186,7 @@ function joinRoom(socket, code, characterName, forceOwner = false) {
   if (!room) return;
   socket.join(code);
   socket.data.roomCode = code;
+  socket.emit("world-seed", { seed: room.seed });
   const player = { x: 0, y: 0, name: String(characterName || "Player").slice(0, 24), inCombat: false, onBoat: false, civName: "", owner: forceOwner || room.ownerId === socket.id };
   if (forceOwner) {
     room.ownerId = socket.id;
