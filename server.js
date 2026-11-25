@@ -31,34 +31,89 @@ function makeCode() {
 }
 
 io.on("connection", (socket) => {
-  socket.on("create-room", (callback) => {
+  socket.on("create-room", (profile, callback) => {
+    if (typeof profile === "function") { callback = profile; profile = {}; }
     let code;
     do { code = makeCode(); } while (rooms.has(code));
     rooms.set(code, { players: new Map(), createdAt: Date.now() });
-    joinRoom(socket, code);
+    joinRoom(socket, code, profile?.name);
     if (typeof callback === "function") callback({ ok: true, code });
   });
 
-  socket.on("join-room", (rawCode, callback) => {
+  socket.on("join-room", (rawCode, profile, callback) => {
+    if (typeof profile === "function") { callback = profile; profile = {}; }
     const code = String(rawCode || "").trim().toUpperCase();
     if (!rooms.has(code)) {
       if (typeof callback === "function") callback({ ok: false, error: "Room not found." });
       return;
     }
-    joinRoom(socket, code);
+    joinRoom(socket, code, profile?.name);
     if (typeof callback === "function") callback({ ok: true, code });
   });
 
   socket.on("player-update", (data) => {
     const code = socket.data.roomCode;
     if (!code || !rooms.has(code) || !data || typeof data !== "object") return;
+    const previous = rooms.get(code).players.get(socket.id) || {};
     const safe = {
       x: Number.isFinite(data.x) ? data.x : 0,
       y: Number.isFinite(data.y) ? data.y : 0,
-      name: String(data.name || "Player").slice(0, 24)
+      name: String(data.name || previous.name || "Player").slice(0, 24),
+      inCombat: !!data.inCombat,
+      onBoat: !!data.onBoat,
+      civName: String(data.civName || "").slice(0, 32)
     };
     rooms.get(code).players.set(socket.id, safe);
     socket.to(code).emit("player-updated", { id: socket.id, ...safe });
+  });
+
+  socket.on("travel-request", (data, callback) => {
+    const code = socket.data.roomCode, target = data?.targetId;
+    if (!code || !rooms.has(code) || !target || !rooms.get(code).players.has(target)) {
+      if (typeof callback === "function") callback({ ok: false, error: "That player is no longer in this room." });
+      return;
+    }
+    const sender = rooms.get(code).players.get(socket.id);
+    io.to(target).emit("travel-request", { id: socket.id, name: sender?.name || "Player" });
+    if (typeof callback === "function") callback({ ok: true });
+  });
+
+  socket.on("travel-response", (data, callback) => {
+    const code = socket.data.roomCode, target = data?.requesterId;
+    if (!code || !rooms.has(code) || !target || !rooms.get(code).players.has(target)) {
+      if (typeof callback === "function") callback({ ok: false, error: "The requesting player is no longer in this room." });
+      return;
+    }
+    const destination = rooms.get(code).players.get(socket.id);
+    io.to(target).emit("travel-result", {
+      accepted: !!data.accepted, x: destination?.x ?? 0, y: destination?.y ?? 0,
+      inCombat: !!destination?.inCombat || !!data.inCombat,
+      onBoat: !!destination?.onBoat || !!data.onBoat,
+      name: destination?.name || data.name || "Player"
+    });
+    if (typeof callback === "function") callback({ ok: true });
+  });
+
+  socket.on("civ-invite", (data, callback) => {
+    const code = socket.data.roomCode, target = data?.targetId;
+    if (!code || !rooms.has(code) || !target || !rooms.get(code).players.has(target)) {
+      if (typeof callback === "function") callback({ ok: false, error: "That player is no longer in this room." });
+      return;
+    }
+    const sender = rooms.get(code).players.get(socket.id);
+    io.to(target).emit("civ-invite", { id: socket.id, name: sender?.name || "Player", civName: String(data.civName || "").slice(0, 32) });
+    if (typeof callback === "function") callback({ ok: true });
+  });
+
+  socket.on("civ-response", (data, callback) => {
+    const code = socket.data.roomCode, target = data?.inviterId;
+    if (!code || !rooms.has(code) || !target || !rooms.get(code).players.has(target)) {
+      if (typeof callback === "function") callback({ ok: false, error: "The inviting player is no longer in this room." });
+      return;
+    }
+    const responder = rooms.get(code).players.get(socket.id);
+    io.to(target).emit("civ-result", { accepted: !!data.accepted, name: responder?.name || "Player", civName: String(data.civName || "").slice(0, 32) });
+    if (typeof callback === "function") callback({ ok: true });
   });
 
   socket.on("disconnect", () => {
@@ -72,7 +127,7 @@ io.on("connection", (socket) => {
   });
 });
 
-function joinRoom(socket, code) {
+function joinRoom(socket, code, characterName) {
   const previous = socket.data.roomCode;
   if (previous && rooms.has(previous)) {
     rooms.get(previous).players.delete(socket.id);
@@ -81,9 +136,10 @@ function joinRoom(socket, code) {
   socket.join(code);
   socket.data.roomCode = code;
   const room = rooms.get(code);
-  room.players.set(socket.id, { x: 0, y: 0, name: "Player" });
+  const player = { x: 0, y: 0, name: String(characterName || "Player").slice(0, 24), inCombat: false, onBoat: false, civName: "" };
+  room.players.set(socket.id, player);
   socket.emit("room-players", [...room.players.entries()].map(([id, p]) => ({ id, ...p })));
-  socket.to(code).emit("player-joined", { id: socket.id, x: 0, y: 0, name: "Player" });
+  socket.to(code).emit("player-joined", { id: socket.id, ...player });
 }
 
 const port = Number(process.env.PORT) || 3000;
