@@ -83,7 +83,8 @@ io.on("connection", (socket) => {
       name: String(data.name || previous.name || "Player").slice(0, 24),
       inCombat: !!data.inCombat,
       onBoat: !!data.onBoat,
-      civName: String(data.civName || "").slice(0, 32)
+      civName: String(data.civName || "").slice(0, 32),
+      owner: room.ownerId === socket.id || !!previous.owner
     };
     rooms.get(code).players.set(socket.id, safe);
     socket.to(code).emit("player-updated", { id: socket.id, ...safe });
