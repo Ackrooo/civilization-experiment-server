@@ -166,7 +166,7 @@ function joinRoom(socket, code, characterName, forceOwner = false) {
   socket.data.roomCode = code;
   const room = rooms.get(code);
   const player = { x: 0, y: 0, name: String(characterName || "Player").slice(0, 24), inCombat: false, onBoat: false, civName: "", owner: forceOwner || room.ownerId === socket.id };
-  if (forceOwner) room.ownerId = socket.id;
+  if (forceOwner) { room.ownerId = socket.id; io.to(code).emit("owner-changed", { id: socket.id }); }
   room.players.set(socket.id, player);
   socket.emit("room-players", [...room.players.entries()].map(([id, p]) => ({ id, ...p })));
   socket.to(code).emit("player-joined", { id: socket.id, ...player });
